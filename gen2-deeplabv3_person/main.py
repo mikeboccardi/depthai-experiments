@@ -35,8 +35,8 @@ parser.add_argument("-nn", "--nn_model", help="select model path for inference",
 
 args = parser.parse_args()
 
-cam_source = args.cam_input 
-nn_path = args.nn_model 
+cam_source = args.cam_input
+nn_path = args.nn_model
 
 nn_shape = 256
 if '513' in nn_path:
@@ -45,7 +45,7 @@ if '513' in nn_path:
 def decode_deeplabv3p(output_tensor):
     class_colors = [[0,0,0],  [0,255,0]]
     class_colors = np.asarray(class_colors, dtype=np.uint8)
-    
+
     output = output_tensor.reshape(nn_shape,nn_shape)
     output_colors = np.take(class_colors, output, axis=0)
     return output_colors
@@ -57,11 +57,9 @@ def show_deeplabv3p(output_colors, frame):
 
 # Start defining a pipeline
 pipeline = dai.Pipeline()
-
-pipeline.setOpenVINOVersion(version = dai.OpenVINO.Version.VERSION_2021_2)
-
+pipeline.setOpenVINOVersion(dai.OpenVINO.VERSION_2021_2)
 # Define a neural network that will make predictions based on the source frames
-detection_nn = pipeline.createNeuralNetwork()
+detection_nn = pipeline.create(dai.node.NeuralNetwork)
 detection_nn.setBlobPath(nn_path)
 
 detection_nn.setNumPoolFrames(4)
@@ -71,19 +69,19 @@ detection_nn.setNumInferenceThreads(2)
 cam=None
 # Define a source - color camera
 if cam_source == 'rgb':
-    cam = pipeline.createColorCamera()
+    cam = pipeline.create(dai.node.ColorCamera)
     cam.setPreviewSize(nn_shape,nn_shape)
     cam.setInterleaved(False)
     cam.preview.link(detection_nn.input)
 elif cam_source == 'left':
-    cam = pipeline.createMonoCamera()
+    cam = pipeline.create(dai.node.MonoCamera)
     cam.setBoardSocket(dai.CameraBoardSocket.LEFT)
 elif cam_source == 'right':
-    cam = pipeline.createMonoCamera()
+    cam = pipeline.create(dai.node.MonoCamera)
     cam.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
 if cam_source != 'rgb':
-    manip = pipeline.createImageManip()
+    manip = pipeline.create(dai.node.ImageManip)
     manip.setResize(nn_shape,nn_shape)
     manip.setKeepAspectRatio(True)
     manip.setFrameType(dai.RawImgFrame.Type.BGR888p)
@@ -93,13 +91,13 @@ if cam_source != 'rgb':
 cam.setFps(40)
 
 # Create outputs
-xout_rgb = pipeline.createXLinkOut()
+xout_rgb = pipeline.create(dai.node.XLinkOut)
 xout_rgb.setStreamName("nn_input")
 xout_rgb.input.setBlocking(False)
 
 detection_nn.passthrough.link(xout_rgb.input)
 
-xout_nn = pipeline.createXLinkOut()
+xout_nn = pipeline.create(dai.node.XLinkOut)
 xout_nn.setStreamName("nn")
 xout_nn.input.setBlocking(False)
 

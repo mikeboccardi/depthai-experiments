@@ -35,7 +35,7 @@ parser.add_argument('-v', '--video_path', help="Path to video frame", default="v
 args = parser.parse_args()
 
 video_source = args.video_path
-nn_path = args.nn_model 
+nn_path = args.nn_model
 
 # resize input to smaller size for faster inference
 NN_WIDTH, NN_HEIGHT = 512, 256
@@ -95,7 +95,7 @@ def show_output(overlay, frame):
 # --------------- Check input ---------------
 vid_path = Path(video_source)
 if not vid_path.is_file():
-    raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), video_source)
+    raise FileNotFoundError("Video file not found. Either run download.py script first, or specify the path to the video file with '--video_path' argument.")
 
 # --------------- Pipeline ---------------
 # Start defining a pipeline
@@ -103,14 +103,14 @@ pipeline = dai.Pipeline()
 pipeline.setOpenVINOVersion(version = dai.OpenVINO.VERSION_2021_4)
 
 # Create Manip for image resizing and NN for count inference
-manip = pipeline.createImageManip()
-detection_nn = pipeline.createNeuralNetwork()
+manip = pipeline.create(dai.node.ImageManip)
+detection_nn = pipeline.create(dai.node.NeuralNetwork)
 
 # Create output links, and in link for video
-manipOut = pipeline.createXLinkOut()
-xinFrame = pipeline.createXLinkIn()
-xlinkOut = pipeline.createXLinkOut()
-nnOut = pipeline.createXLinkOut()
+manipOut = pipeline.create(dai.node.XLinkOut)
+xinFrame = pipeline.create(dai.node.XLinkIn)
+xlinkOut = pipeline.create(dai.node.XLinkOut)
+nnOut = pipeline.create(dai.node.XLinkOut)
 
 manipOut.setStreamName("manip")
 xinFrame.setStreamName("inFrame")

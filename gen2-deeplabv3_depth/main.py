@@ -60,20 +60,21 @@ class FPSHandler:
 class HostSync:
     def __init__(self):
         self.arrays = {}
-    def add_msg(self, name, data, ts):
+    def add_msg(self, name, msg):
         if not name in self.arrays:
             self.arrays[name] = []
         # Add msg to array
-        self.arrays[name].append({'data': data, 'timestamp': ts})
+        self.arrays[name].append({'msg': msg})
         # Try finding synced msgs
+        ts = msg.getTimestamp()
         synced = {}
         for name, arr in self.arrays.items():
             for i, obj in enumerate(arr):
-                time_diff = abs(obj['timestamp'] - ts)
+                time_diff = abs(obj['msg'].getTimestamp() - ts)
                 # 20ms since we add rgb/depth frames at 30FPS => 33ms. If
                 # time difference is below 20ms, it's considered as synced
                 if time_diff < timedelta(milliseconds=33):
-                    synced[name] = obj['data']
+                    synced[name] = obj['msg']
                     # print(f"{name}: {i}/{len(arr)}")
                     break
         # If there are 3 (all) synced msgs, remove all old msgs
@@ -84,7 +85,7 @@ class HostSync:
             # Remove old msgs
             for name, arr in self.arrays.items():
                 for i, obj in enumerate(arr):
-                    if remove(obj['timestamp'], ts):
+                    if remove(obj['msg'].getTimestamp(), ts):
                         arr.remove(obj)
                     else: break
             return synced
@@ -102,7 +103,7 @@ pipeline = dai.Pipeline()
 
 pipeline.setOpenVINOVersion(version=dai.OpenVINO.Version.VERSION_2021_2)
 
-cam = pipeline.createColorCamera()
+cam = pipeline.create(dai.node.ColorCamera)
 cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
 # Color cam: 1920x1080
 # Mono cam: 640x400
@@ -116,40 +117,33 @@ cam.setPreviewSize(nn_shape, nn_shape)
 cam.setInterleaved(False)
 
 # NN output linked to XLinkOut
-isp_xout = pipeline.createXLinkOut()
+isp_xout = pipeline.create(dai.node.XLinkOut)
 isp_xout.setStreamName("cam")
 cam.isp.link(isp_xout.input)
 
 # Define a neural network that will make predictions based on the source frames
-detection_nn = pipeline.createNeuralNetwork()
+detection_nn = pipeline.create(dai.node.NeuralNetwork)
 detection_nn.setBlobPath(nn_path)
 detection_nn.input.setBlocking(False)
 detection_nn.setNumInferenceThreads(2)
 cam.preview.link(detection_nn.input)
 
 # NN output linked to XLinkOut
-xout_nn = pipeline.createXLinkOut()
+xout_nn = pipeline.create(dai.node.XLinkOut)
 xout_nn.setStreamName("nn")
 detection_nn.out.link(xout_nn.input)
 
-xout_passthrough = pipeline.createXLinkOut()
-xout_passthrough.setStreamName("pass")
-# Only send metadata, we are only interested in timestamp, so we can sync
-# depth frames with NN output
-xout_passthrough.setMetadataOnly(True)
-detection_nn.passthrough.link(xout_passthrough.input)
-
 # Left mono camera
-left = pipeline.createMonoCamera()
+left = pipeline.create(dai.node.MonoCamera)
 left.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 left.setBoardSocket(dai.CameraBoardSocket.LEFT)
 # Right mono camera
-right = pipeline.createMonoCamera()
+right = pipeline.create(dai.node.MonoCamera)
 right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
 right.setBoardSocket(dai.CameraBoardSocket.RIGHT)
 
 # Create a node that will produce the depth map (using disparity output as it's easier to visualize depth this way)
-stereo = pipeline.createStereoDepth()
+stereo = pipeline.create(dai.node.StereoDepth)
 stereo.initialConfig.setConfidenceThreshold(245)
 stereo.initialConfig.setMedianFilter(dai.StereoDepthProperties.MedianFilter.KERNEL_7x7)
 # stereo.initialConfig.setBilateralFilterSigma(64000)
@@ -160,7 +154,7 @@ left.out.link(stereo.left)
 right.out.link(stereo.right)
 
 # Create depth output
-xout_disp = pipeline.createXLinkOut()
+xout_disp = pipeline.create(dai.node.XLinkOut)
 xout_disp.setStreamName("disparity")
 stereo.disparity.link(xout_disp.input)
 
@@ -175,7 +169,6 @@ with dai.Device(pipeline.getOpenVINOVersion()) as device:
     q_color = device.getOutputQueue(name="cam", maxSize=4, blocking=False)
     q_disp = device.getOutputQueue(name="disparity", maxSize=4, blocking=False)
     q_nn = device.getOutputQueue(name="nn", maxSize=4, blocking=False)
-    q_pass = device.getOutputQueue(name="pass", maxSize=4, blocking=False)
 
     fps = FPSHandler()
     sync = HostSync()
@@ -190,16 +183,11 @@ with dai.Device(pipeline.getOpenVINOVersion()) as device:
     while True:
         msgs = False
         if q_color.has():
-            color = q_color.get()
-            msgs = msgs or sync.add_msg("color", color, color.getTimestamp())
-
+            msgs = msgs or sync.add_msg("color", q_color.get())
         if q_disp.has():
-            disp = q_disp.get()
-            msgs = msgs or sync.add_msg("depth", disp, disp.getTimestamp())
-
+            msgs = msgs or sync.add_msg("depth", q_disp.get())
         if q_nn.has():
-            timestamp = q_pass.get().getTimestamp()
-            msgs = msgs or sync.add_msg("nn", q_nn.get(), timestamp)
+            msgs = msgs or sync.add_msg("nn", q_nn.get())
 
         if msgs:
             fps.next_iter()

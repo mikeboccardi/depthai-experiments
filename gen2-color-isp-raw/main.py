@@ -15,6 +15,7 @@ from pathlib import Path
   exposure time:     I   O      1..33000 [us]
   sensitivity iso:   K   L    100..1600
   focus:             ,   .      0..255 [far..near]
+  white balance:     N   M   1000..12000 (light color temperature K)
 To go back to auto controls:
   'E' - autoexposure
   'F' - autofocus (continuous)
@@ -38,7 +39,7 @@ For the 'Select control: ...' options, use these keys to modify the value:
 '''
 
 parser = argparse.ArgumentParser()
-parser.add_argument('-res', '--resolution', default='1080', choices={'1080', '4k', '12mp'},
+parser.add_argument('-res', '--resolution', default='1080', choices={'1080', '4k', '12mp', '13mp'},
                     help="Select RGB resolution. Default: %(default)s")
 parser.add_argument('-raw', '--enable_raw', default=False, action="store_true",
                     help='Enable the color RAW stream')
@@ -88,6 +89,7 @@ rgb_res_opts = {
     '1080': dai.ColorCameraProperties.SensorResolution.THE_1080_P,
     '4k'  : dai.ColorCameraProperties.SensorResolution.THE_4_K,
     '12mp': dai.ColorCameraProperties.SensorResolution.THE_12_MP,
+    '13mp': dai.ColorCameraProperties.SensorResolution.THE_13_MP,
 }
 rgb_res = rgb_res_opts.get(args.resolution)
 
@@ -96,28 +98,30 @@ pipeline = dai.Pipeline()
 if args.camera_tuning:
     pipeline.setCameraTuningBlobPath(str(args.camera_tuning))
 
-cam = pipeline.createColorCamera()
+cam = pipeline.create(dai.node.ColorCamera)
 cam.setResolution(rgb_res)
 # Optional, set manual focus. 255: macro (8cm), about 120..130: infinity
+focus_name = 'af'
 if args.lens_position >= 0:
     cam.initialControl.setManualFocus(args.lens_position)
+    focus_name = 'f' + str(args.lens_position)
 cam.setIspScale(1, args.isp_downscale)
 cam.setFps(args.fps)  # Default: 30
 if args.rotate:
     cam.setImageOrientation(dai.CameraImageOrientation.ROTATE_180_DEG)
 
 # Camera control input
-control = pipeline.createXLinkIn()
+control = pipeline.create(dai.node.XLinkIn)
 control.setStreamName('control')
 control.out.link(cam.inputControl)
 
 if 'isp' in streams:
-    xout_isp = pipeline.createXLinkOut()
+    xout_isp = pipeline.create(dai.node.XLinkOut)
     xout_isp.setStreamName('isp')
     cam.isp.link(xout_isp.input)
 
 if 'raw' in streams:
-    xout_raw = pipeline.createXLinkOut()
+    xout_raw = pipeline.create(dai.node.XLinkOut)
     xout_raw.setStreamName('raw')
     cam.raw.link(xout_raw.input)
 
@@ -136,10 +140,11 @@ controlQueue = device.getInputQueue('control')
 # Manual exposure/focus set step, configurable
 EXP_STEP = 500  # us
 ISO_STEP = 50
-LENS_STEP = 3
+LENS_STEP = 1
+WB_STEP = 100
 
 # Defaults and limits for manual focus/exposure controls
-lens_pos = 150
+lens_pos = 130
 lens_min = 0
 lens_max = 255
 
@@ -152,6 +157,10 @@ exp_max = int(0.99 * 1000000 / args.fps)
 sens_iso = 800
 sens_min = 100
 sens_max = 1600
+
+wb_manual = 4000
+wb_min = 1000
+wb_max = 12000
 
 # TODO how can we make the enums automatically iterable?
 awb_mode_idx = -1
@@ -210,6 +219,7 @@ while True:
         payload = data.getData()
         capture_file_info_str = ('capture_' + name
                                  + '_' + str(width) + 'x' + str(height)
+                                 + '_' + focus_name
                                  + '_' + str(data.getSequenceNum())
                                 )
         if name == 'isp':
@@ -254,11 +264,13 @@ while True:
         ctrl.setAutoFocusMode(dai.CameraControl.AutoFocusMode.AUTO)
         ctrl.setAutoFocusTrigger()
         controlQueue.send(ctrl)
+        focus_name = 'af'
     elif key == ord('f'):
         print("Autofocus enable, continuous")
         ctrl = dai.CameraControl()
         ctrl.setAutoFocusMode(dai.CameraControl.AutoFocusMode.CONTINUOUS_VIDEO)
         controlQueue.send(ctrl)
+        focus_name = 'af'
     elif key == ord('e'):
         print("Autoexposure enable")
         ctrl = dai.CameraControl()
@@ -272,6 +284,7 @@ while True:
         ctrl = dai.CameraControl()
         ctrl.setManualFocus(lens_pos)
         controlQueue.send(ctrl)
+        focus_name = 'f' + str(lens_pos)
     elif key in [ord('i'), ord('o'), ord('k'), ord('l')]:
         if key == ord('i'): exp_time -= EXP_STEP
         if key == ord('o'): exp_time += EXP_STEP
@@ -282,6 +295,14 @@ while True:
         print("Setting manual exposure, time:", exp_time, "iso:", sens_iso)
         ctrl = dai.CameraControl()
         ctrl.setManualExposure(exp_time, sens_iso)
+        controlQueue.send(ctrl)
+    elif key in [ord('n'), ord('m')]:
+        if key == ord('n'): wb_manual -= WB_STEP
+        if key == ord('m'): wb_manual += WB_STEP
+        wb_manual = clamp(wb_manual, wb_min, wb_max)
+        print("Setting manual white balance, temperature: ", wb_manual, "K")
+        ctrl = dai.CameraControl()
+        ctrl.setManualWhiteBalance(wb_manual)
         controlQueue.send(ctrl)
     elif key == ord('1'):
         awb_lock = not awb_lock

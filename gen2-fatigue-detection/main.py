@@ -3,7 +3,6 @@ import cv2
 import depthai as dai
 import face_landmarks
 
-openvinoVersion = "2020.4"
 p = dai.Pipeline()
 
 cam = p.create(dai.node.ColorCamera)
@@ -25,7 +24,7 @@ cam.preview.link(face_det_manip.inputImage)
 # NN that detects faces in the image
 face_nn = p.create(dai.node.MobileNetDetectionNetwork)
 face_nn.setConfidenceThreshold(0.3)
-face_nn.setBlobPath(blobconverter.from_zoo("face-detection-retail-0004", shaves=6, version=openvinoVersion))
+face_nn.setBlobPath(blobconverter.from_zoo("face-detection-retail-0004", shaves=6))
 face_det_manip.out.link(face_nn.input)
 
 # # Send ImageManipConfig to host so it can visualize the landmarks
@@ -82,16 +81,15 @@ manip_crop.initialConfig.setResize(160, 160)
 manip_crop.setWaitForConfigInput(True)
 
 # Second NN that detcts emotions from the cropped 64x64 face
-landmarks_nn = p.createNeuralNetwork()
+landmarks_nn = p.create(dai.node.NeuralNetwork)
 landmarks_nn.setBlobPath(blobconverter.from_zoo(
     name="facial_landmarks_68_160x160",
     shaves=6,
     zoo_type="depthai",
-    version=openvinoVersion
     ))
 manip_crop.out.link(landmarks_nn.input)
 
-landmarks_nn_xout = p.createXLinkOut()
+landmarks_nn_xout = p.create(dai.node.XLinkOut)
 landmarks_nn_xout.setStreamName("nn")
 landmarks_nn.out.link(landmarks_nn_xout.input)
 
